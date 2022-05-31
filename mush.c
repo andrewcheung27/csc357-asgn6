@@ -38,6 +38,7 @@ int outputOpen(char *name) {
 }
 
 
+/* TODO: handle SIGINT */
 void handler(int signum) {
     reset();
 }
@@ -49,31 +50,33 @@ int main(int argc, char *argv[]) {
     sigset_t oldSigset;
     struct sigaction sa;
 
-    int inPipe[2];
-    int outPipe[2];
+    int i;
+    int *fds;
+    int fdsLen;
+    int in;
+    int out;
+    int newPipe[2];
+    int numChildren;
     pid_t child;
+    int status;
+
     char *line;
     pipeline myPipeline;
     struct clstage *prevStage;
     struct clstage *stage;
     struct clstage *nextStage;
-    int i;
-
-    mode_t m;
-    int inFD;
-    int outFD;
 
 
     /* block interrupts until right before launching children */
     sigemptyset(sigset);
     sigaddset(sigset, SIGINT);
     sigprocmask(SIG_SETMASK, &sigset, &oldSigset);
-
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = handler;
     sigaction(SIGINT, sa, NULL);
 
 
+    /* arg things */
     if (argc == 1) {
         infile = stdin;
     }
@@ -86,63 +89,84 @@ int main(int argc, char *argv[]) {
     }
 
 
-    /* handle a command, probably put this in a loop */
-
+    /* TODO: put this in the shell loop */
+    /* TODO: built-in cd command */
     /* poll infile???? */
     line = readLongString(infile);
     if (line == NULL) {
+        /* TODO: handle readLongString error or EOF differently */
         continue;
     }
     myPipeline = crack_pipeline(line);
+    free(line);
 
+    fdsLen = myPipeline->length * 2;
+    fds = (int *) malloc(sizeof(int) * fdsLen);
+    if (fds == NULL) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+    numChildren = 0;
+    newPipe[READ_END] = -1;
+    newPipe[WRITE_END] = -1;
     prevStage = NULL;
-    stage = (myPipeline->stage)[i];
-    nextStage = (myPipeline->stage)[i + 1];
-    /* TODO: change to i < myPipeline->length,
-     * put FDs in array and launch children all at once */
-    for (i = 0; stage != NULL; i++) {
+    stage = (myPipeline->stage)[numChildren];
+    nextStage = (myPipeline->stage)[numChildren + 1];
+    while (numChildren < myPipeline->length) {
+        in = 2 * numChildren;
+        out = 2 * numChildren + 1;
+
         if (prevStage == NULL) {
             if (stage->inname == NULL) {
-                inFD = STDIN_FILENO;
+                fds[in] = STDIN_FILENO;
             }
             else {
-                inFD = inputOpen(stage->inname);
+                fds[in] = inputOpen(stage->inname);
             }
         }
         else {
             if (stage->inname == NULL) {
                 /* use read end of pipe */
-                inFD = inPipe[READ_END];
+                fds[in] = newPipe[READ_END];
             }
             else {
-                inFD = inputOpen(stage->inname);
+                fds[in] = inputOpen(stage->inname);
             }
         }
 
         if (nextStage == NULL) {
             if (stage->outname == NULL) {
-                outFD = STDOUT_FILENO;
+                fds[out] = STDOUT_FILENO;
             }
             else {
-                outFD = outputOpen(stage->outname);
+                fds[out] = outputOpen(stage->outname);
             }
         }
         else {
             if (stage->outname == NULL) {
-                /* do some plumbing to clean up previous FDs,
-                 * current stage writes to outPipe[W] */
-                close(inPipe[READ_END]);
-                close(inPipe[WRITE_END]);
-                inPipe[READ_END] = outPipe[READ_END];
-                inPipe[WRITE_END] = outPipe[WRITE_END];
-                pipe(outPipe);
-
-                outFD = outPipe[WRITE_END];
+                pipe(newPipe);
+                fds[out] = newPipe[WRITE_END];
             }
             else {
-                outFD = outputOpen(stage->outname);
+                fds[out] = outputOpen(stage->outname);
             }
         }
+
+        numChildren++;
+        prevStage = stage;
+        stage = (myPipeline->stage)[numChildren];
+        nextStage = (myPipeline->stage)[numChildren + 1];
+    }
+
+
+    /* unblock interrupts for the children */
+    sigprocmask(SIG_SETMASK, &oldSigset, &sigset);
+
+
+    /* glorious birth */
+    for (i = 0; i < myPipeline->length; i++) {
+        in = 2 * i;
+        out = 2 * i + 1;
 
         child = fork();
         if (child == -1) {
@@ -150,21 +174,20 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
 
-        /* child uses exec() */
+        /* child */
         if (child == 0) {
             /* I/O redirection */
-            if (inFD != STDIN_FILENO) {
-                dup2(inFD, STDIN_FILENO);
+            if (fds[in] != STDIN_FILENO) {
+                dup2(fds[in], STDIN_FILENO);
             }
             if (outFD != STDOUT_FILENO) {
-                dup2(outFD, STDOUT_FILENO);
+                dup2(fds[out], STDOUT_FILENO);
             }
 
             /* clean up duplicate FDs */
-            close(inPipe[READ_END]);
-            close(inPipe[WRITE_END]);
-            close(outPipe[READ_END]);
-            close(outPipe[WRITE_END]);
+            for (i = 0; i < fdsLen; i++) {
+                close(fds[i]);
+            }
 
             /* launch the program */
             execvp((stage->argv)[0], myPipleine->stage->argv);
@@ -173,16 +196,24 @@ int main(int argc, char *argv[]) {
             perror((stage->argv)[0]);
             _exit(EXIT_FAILURE);
         }
+    }
+    free(fds);
 
-        prevStage = stage;
-        stage = (myPipeline->stage)[i];
-        nextStage = (myPipeline->stage)[i + 1];
+
+    /* close write ends of the children (odd indices), so they don't hang */
+    for (i = WRITE_END; i < fdsLen; i += 2) {
+        close(fds[i]);
     }
 
 
+    /* wait for all the children */
+    for (i = 0; i < numChildren; i++) {
+        wait(&status);
+    }
+    /* TODO: end loop, reset shell */
 
 
-
+    /* cleanup */
     free_pipeline(myPipeline);
     yylex_destroy();
     return 0;
