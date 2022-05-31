@@ -2,17 +2,13 @@ CC = gcc
 CFLAGS = -Wall -pedantic -g -O3
 
 
-all: forkit tryit
+all: mush.c
 
-forkit: forkit.o
-	$(CC) $(CFLAGS) -o forkit forkit.o
-forkit.o: forkit.c
-	$(CC) $(CFLAGS) -c -o forkit.o forkit.c
 
-tryit: tryit.o
-	$(CC) $(CFLAGS) -o tryit tryit.o
-tryit.o: tryit.c
-	$(CC) $(CFLAGS) -c -o tryit.o tryit.c
+mush2: mush2.o
+	$(CC) $(CFLAGS) -o mush2 -L ~pn-cs357/Given/Mush/lib64 mush2.o -lmush
+mush2.o: mush.c
+	$(CC) $(CFLAGS) -c -o mush2.o -I ~pn-cs357/Given/Mush/include mush2.c
 
 
 clean:
