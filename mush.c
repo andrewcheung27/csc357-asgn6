@@ -17,6 +17,7 @@ int inputOpen(char *name) {
     fd = open(name, O_RDONLY);
     if (fd == -1) {
         perror("open");
+        /* TODO: clean up and reset instead of exiting shell */
         exit(EXIT_FAILURE);
     }
 
@@ -31,6 +32,7 @@ int outputOpen(char *name) {
     fd = open(name, O_RDWR | O_CREAT | O_TRUNC, m);
     if (fd == -1) {
         perror("open");
+        /* TODO: clean up and reset instead of exiting shell */
         exit(EXIT_FAILURE);
     }
 
@@ -41,6 +43,30 @@ int outputOpen(char *name) {
 /* TODO: handle SIGINT */
 void handler(int signum) {
     reset();
+}
+
+
+int tryCD(int argc, char *argv[]) {
+    char *path;
+
+    if (argc > 2) {
+        fprintf(stderr, "usage: cd [directory]\n");
+        return -1;
+    }
+
+    if (argc == 2) {
+        if (chdir(argv[1]) == -1) {
+            perror("cd");
+            return -1;
+        }
+    }
+
+    else {
+        path = getenv("HOME");
+        if (path == NULL) {
+            /* use getpwuid to look up home directory */
+        }
+    }
 }
 
 
@@ -64,7 +90,6 @@ int main(int argc, char *argv[]) {
     pipeline myPipeline;
     struct clstage *prevStage;
     struct clstage *stage;
-    struct clstage *nextStage;
 
 
     /* block interrupts until right before launching children */
@@ -89,9 +114,8 @@ int main(int argc, char *argv[]) {
     }
 
 
-    /* TODO: put this in the shell loop */
+    /* TODO: put this in the shell loop (poll infile???) */
     /* TODO: built-in cd command */
-    /* poll infile???? */
     line = readLongString(infile);
     if (line == NULL) {
         /* TODO: handle readLongString error or EOF differently */
@@ -104,6 +128,7 @@ int main(int argc, char *argv[]) {
     fds = (int *) malloc(sizeof(int) * fdsLen);
     if (fds == NULL) {
         perror("malloc");
+        /* todo: clean up and reset instead of exiting */
         exit(EXIT_FAILURE);
     }
     numChildren = 0;
@@ -111,59 +136,55 @@ int main(int argc, char *argv[]) {
     newPipe[WRITE_END] = -1;
     prevStage = NULL;
     stage = (myPipeline->stage)[numChildren];
-    nextStage = (myPipeline->stage)[numChildren + 1];
+
+
+    /* fill in file descriptors table (fds),
+     * making pipes and opening files as needed */
     while (numChildren < myPipeline->length) {
         in = 2 * numChildren;
         out = 2 * numChildren + 1;
 
-        if (prevStage == NULL) {
-            if (stage->inname == NULL) {
+        /* if there is an inname, open and read from that */
+        if (stage->inname != NULL) {
+            fds[in] = inputOpen(stage->inname);
+        }
+        /* for NULL inname, read from stdin or pipe */
+        else {
+            if (prevStage == NULL) {
                 fds[in] = STDIN_FILENO;
             }
             else {
-                fds[in] = inputOpen(stage->inname);
-            }
-        }
-        else {
-            if (stage->inname == NULL) {
-                /* use read end of pipe */
                 fds[in] = newPipe[READ_END];
-            }
-            else {
-                fds[in] = inputOpen(stage->inname);
             }
         }
 
-        if (nextStage == NULL) {
-            if (stage->outname == NULL) {
+        /* if there is an outname, open and write to that */
+        if (stage->outname != NULL) {
+            fds[out] = outputOpen(stage->outname);
+        }
+        /* for NULL outname, write to stdout or pipe */
+        else {
+            if (numChildren + 1 == myPipeline-> length) {
                 fds[out] = STDOUT_FILENO;
             }
             else {
-                fds[out] = outputOpen(stage->outname);
-            }
-        }
-        else {
-            if (stage->outname == NULL) {
                 pipe(newPipe);
                 fds[out] = newPipe[WRITE_END];
-            }
-            else {
-                fds[out] = outputOpen(stage->outname);
             }
         }
 
         numChildren++;
         prevStage = stage;
         stage = (myPipeline->stage)[numChildren];
-        nextStage = (myPipeline->stage)[numChildren + 1];
     }
+    free_pipeline(myPipeline);
 
 
     /* unblock interrupts for the children */
     sigprocmask(SIG_SETMASK, &oldSigset, &sigset);
 
 
-    /* glorious birth */
+    /* glorious birth! */
     for (i = 0; i < myPipeline->length; i++) {
         in = 2 * i;
         out = 2 * i + 1;
@@ -171,6 +192,7 @@ int main(int argc, char *argv[]) {
         child = fork();
         if (child == -1) {
             perror("fork");
+            /* TODO: clean up and reset instead of exiting */
             exit(EXIT_FAILURE);
         }
 
@@ -192,7 +214,7 @@ int main(int argc, char *argv[]) {
             /* launch the program */
             execvp((stage->argv)[0], myPipleine->stage->argv);
 
-            /* _exit if exec failed */
+            /* _exit from child if exec failed */
             perror((stage->argv)[0]);
             _exit(EXIT_FAILURE);
         }
@@ -214,7 +236,6 @@ int main(int argc, char *argv[]) {
 
 
     /* cleanup */
-    free_pipeline(myPipeline);
     yylex_destroy();
     return 0;
 }
