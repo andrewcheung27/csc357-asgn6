@@ -51,7 +51,7 @@ int main(int argc, char *argv[]) {
 
     int inPipe[2];
     int outPipe[2];
-    pid_t childPID;
+    pid_t child;
     char *line;
     pipeline myPipeline;
     struct clstage *prevStage;
@@ -88,7 +88,6 @@ int main(int argc, char *argv[]) {
 
     /* handle a command, probably put this in a loop */
 
-
     /* poll infile???? */
     line = readLongString(infile);
     if (line == NULL) {
@@ -96,11 +95,12 @@ int main(int argc, char *argv[]) {
     }
     myPipeline = crack_pipeline(line);
 
-    i = 0;
     prevStage = NULL;
     stage = (myPipeline->stage)[i];
     nextStage = (myPipeline->stage)[i + 1];
-    while (stage != NULL) {
+    /* TODO: change to i < myPipeline->length,
+     * put FDs in array and launch children all at once */
+    for (i = 0; stage != NULL; i++) {
         if (prevStage == NULL) {
             if (stage->inname == NULL) {
                 inFD = STDIN_FILENO;
@@ -112,6 +112,7 @@ int main(int argc, char *argv[]) {
         else {
             if (stage->inname == NULL) {
                 /* use read end of pipe */
+                inFD = inPipe[READ_END];
             }
             else {
                 inFD = inputOpen(stage->inname);
@@ -128,25 +129,47 @@ int main(int argc, char *argv[]) {
         }
         else {
             if (stage->outname == NULL) {
-                /* pipe() and use write end */
+                /* do some plumbing to clean up previous FDs,
+                 * current stage writes to outPipe[W] */
+                close(inPipe[READ_END]);
+                close(inPipe[WRITE_END]);
+                inPipe[READ_END] = outPipe[READ_END];
+                inPipe[WRITE_END] = outPipe[WRITE_END];
+                pipe(outPipe);
+
+                outFD = outPipe[WRITE_END];
             }
             else {
                 outFD = outputOpen(stage->outname);
             }
         }
 
-        childPID = fork();
-        if (childPID == -1) {
+        child = fork();
+        if (child == -1) {
             perror("fork");
             exit(EXIT_FAILURE);
         }
 
-        if (!childPID) {
-            /* pipe shit */
-            dup2()
+        /* child uses exec() */
+        if (child == 0) {
+            /* I/O redirection */
+            if (inFD != STDIN_FILENO) {
+                dup2(inFD, STDIN_FILENO);
+            }
+            if (outFD != STDOUT_FILENO) {
+                dup2(outFD, STDOUT_FILENO);
+            }
 
+            /* clean up duplicate FDs */
+            close(inPipe[READ_END]);
+            close(inPipe[WRITE_END]);
+            close(outPipe[READ_END]);
+            close(outPipe[WRITE_END]);
+
+            /* launch the program */
             execvp((stage->argv)[0], myPipleine->stage->argv);
-            /* exec failed */
+
+            /* _exit if exec failed */
             perror((stage->argv)[0]);
             _exit(EXIT_FAILURE);
         }
