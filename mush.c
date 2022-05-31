@@ -1,9 +1,11 @@
 #include <fcntl.h>
 #include <mush.h>
+#include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -48,6 +50,8 @@ void handler(int signum) {
 
 int tryCD(int argc, char *argv[]) {
     char *path;
+    struct passwd *p;
+    int res;
 
     if (argc > 2) {
         fprintf(stderr, "usage: cd [directory]\n");
@@ -56,7 +60,7 @@ int tryCD(int argc, char *argv[]) {
 
     if (argc == 2) {
         if (chdir(argv[1]) == -1) {
-            perror("cd");
+            perror("chdir");
             return -1;
         }
     }
@@ -65,8 +69,21 @@ int tryCD(int argc, char *argv[]) {
         path = getenv("HOME");
         if (path == NULL) {
             /* use getpwuid to look up home directory */
+            p = getpwuid(getuid());
+            if (p == NULL) {
+                fprintf(stderr, "unable to determine home directory\n");
+                return -1;
+            }
+            res = chdir(p->pw_dir);
+            free(p);
+            if (res == -1) {
+                perror("chdir");
+                return -1;
+            }
         }
     }
+
+    return 0;
 }
 
 
@@ -136,6 +153,14 @@ int main(int argc, char *argv[]) {
     newPipe[WRITE_END] = -1;
     prevStage = NULL;
     stage = (myPipeline->stage)[numChildren];
+
+
+    /* built-in cd command */
+    if (!strcmp((stage->argv)[0], "cd")) {
+        if (tryCD(stage->argc, stage->argv) == -1) {
+            reset();
+        }
+    }
 
 
     /* fill in file descriptors table (fds),
