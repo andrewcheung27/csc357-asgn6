@@ -11,6 +11,10 @@
 
 #define READ_END 0
 #define WRITE_END 1
+#define SHELL_PROMPT "8=P "
+
+extern int errno;
+char interrupted = 0;
 
 
 int inputOpen(char *name) {
@@ -18,9 +22,7 @@ int inputOpen(char *name) {
 
     fd = open(name, O_RDONLY);
     if (fd == -1) {
-        perror("open");
-        /* TODO: clean up and reset instead of exiting shell */
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
     return fd;
@@ -33,18 +35,15 @@ int outputOpen(char *name) {
     m = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IWOTH | S_IROTH;
     fd = open(name, O_RDWR | O_CREAT | O_TRUNC, m);
     if (fd == -1) {
-        perror("open");
-        /* TODO: clean up and reset instead of exiting shell */
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
     return fd;
 }
 
 
-/* TODO: handle SIGINT */
 void handler(int signum) {
-    reset();
+    interrupted = 1;
 }
 
 
@@ -87,15 +86,13 @@ int tryCD(int argc, char *argv[]) {
 }
 
 
-int main(int argc, char *argv[]) {
-    FILE *infile;
+int mush(int argc, char *argv[], pipeline myPipeline) {
     sigset_t sigset;
     sigset_t oldSigset;
     struct sigaction sa;
 
     int i;
     int *fds;
-    int fdsLen;
     int in;
     int out;
     int newPipe[2];
@@ -103,8 +100,6 @@ int main(int argc, char *argv[]) {
     pid_t child;
     int status;
 
-    char *line;
-    pipeline myPipeline;
     struct clstage *prevStage;
     struct clstage *stage;
 
@@ -118,34 +113,10 @@ int main(int argc, char *argv[]) {
     sigaction(SIGINT, sa, NULL);
 
 
-    /* arg things */
-    if (argc == 1) {
-        infile = stdin;
-    }
-    else if (argc == 2) {
-        infile = fopen(argv[1], "r");
-    }
-    else {
-        fprintf(stderr, "usage: mush2 [infile]\n");
-        exit(EXIT_FAILURE);
-    }
-
-
-    /* TODO: put this in the shell loop (poll infile???) */
-    /* TODO: built-in cd command */
-    line = readLongString(infile);
-    if (line == NULL) {
-        /* TODO: handle readLongString error or EOF differently */
-        continue;
-    }
-    myPipeline = crack_pipeline(line);
-    free(line);
-
-    fdsLen = myPipeline->length * 2;
-    fds = (int *) malloc(sizeof(int) * fdsLen);
+    fds = (int *) malloc(sizeof(int) * myPipeline->length * 2);
     if (fds == NULL) {
         perror("malloc");
-        /* todo: clean up and reset instead of exiting */
+        return -1;
         exit(EXIT_FAILURE);
     }
     numChildren = 0;
@@ -158,7 +129,8 @@ int main(int argc, char *argv[]) {
     /* built-in cd command */
     if (!strcmp((stage->argv)[0], "cd")) {
         if (tryCD(stage->argc, stage->argv) == -1) {
-            reset();
+            free(fds);
+            return -1;
         }
     }
 
@@ -172,8 +144,13 @@ int main(int argc, char *argv[]) {
         /* if there is an inname, open and read from that */
         if (stage->inname != NULL) {
             fds[in] = inputOpen(stage->inname);
+            if (fds[in] == -1) {
+                fprintf(stderr, "could not open `%s`: %s\n", name, strerror(errno));
+                free(fds);
+                return -1;
+            }
         }
-        /* for NULL inname, read from stdin or pipe */
+            /* for NULL inname, read from stdin or pipe */
         else {
             if (prevStage == NULL) {
                 fds[in] = STDIN_FILENO;
@@ -186,8 +163,13 @@ int main(int argc, char *argv[]) {
         /* if there is an outname, open and write to that */
         if (stage->outname != NULL) {
             fds[out] = outputOpen(stage->outname);
+            if (fds[out] == -1) {
+                fprintf(stderr, "could not open `%s`: %s\n", name, strerror(errno));
+                free(fds);
+                return -1;
+            }
         }
-        /* for NULL outname, write to stdout or pipe */
+            /* for NULL outname, write to stdout or pipe */
         else {
             if (numChildren + 1 == myPipeline-> length) {
                 fds[out] = STDOUT_FILENO;
@@ -202,11 +184,6 @@ int main(int argc, char *argv[]) {
         prevStage = stage;
         stage = (myPipeline->stage)[numChildren];
     }
-    free_pipeline(myPipeline);
-
-
-    /* unblock interrupts for the children */
-    sigprocmask(SIG_SETMASK, &oldSigset, &sigset);
 
 
     /* glorious birth! */
@@ -216,9 +193,8 @@ int main(int argc, char *argv[]) {
 
         child = fork();
         if (child == -1) {
-            perror("fork");
-            /* TODO: clean up and reset instead of exiting */
-            exit(EXIT_FAILURE);
+            fprintf(stderr, "fork `%s`: %s\n", argv[0], strerror(errno));
+            return -1;
         }
 
         /* child */
@@ -232,11 +208,12 @@ int main(int argc, char *argv[]) {
             }
 
             /* clean up duplicate FDs */
-            for (i = 0; i < fdsLen; i++) {
+            for (i = 0; i < myPipeline->length * 2; i++) {
                 close(fds[i]);
             }
 
-            /* launch the program */
+            /* unblock interrupts and exec child process */
+            sigprocmask(SIG_SETMASK, &oldSigset, 0);
             execvp((stage->argv)[0], myPipleine->stage->argv);
 
             /* _exit from child if exec failed */
@@ -244,23 +221,85 @@ int main(int argc, char *argv[]) {
             _exit(EXIT_FAILURE);
         }
     }
-    free(fds);
 
 
     /* close write ends of the children (odd indices), so they don't hang */
-    for (i = WRITE_END; i < fdsLen; i += 2) {
+    for (i = WRITE_END; i < myPipeline->length * 2; i += 2) {
         close(fds[i]);
     }
 
 
     /* wait for all the children */
-    for (i = 0; i < numChildren; i++) {
+    i = 0;
+    while (i < numChildren) {
         wait(&status);
+        if (WIFEXITED(status)) {
+            i++;
+        }
     }
-    /* TODO: end loop, reset shell */
+
+    free(fds);
+}
+
+
+int main(int argc, char *argv[]) {
+    FILE *infile;
+    char *line;
+    pipeline myPipeline;
+    char printPrompt;
+
+
+    /* arg things */
+    if (argc == 1) {
+        infile = stdin;
+    }
+    else if (argc == 2) {
+        infile = fopen(argv[1], "r");
+        if (infile == NULL) {
+            perror(argv[1]);
+            exit(EXIT_FAILURE);
+        }
+    }
+    else {
+        fprintf(stderr, "usage: mush2 [infile]\n");
+        exit(EXIT_FAILURE);
+    }
+
+
+    printPrompt = 1;
+    while (!feof(infile)) {
+        if (printPrompt) {
+            printf("%s", SHELL_PROMPT);
+        }
+
+        /* read command into pipeline */
+        line = readLongString(infile);
+        if (line == NULL) {
+            fprintf(stderr, "input could not be read\n");
+            printPrompt = 0;
+            continue;
+        }
+        printPrompt = 1;
+        myPipeline = crack_pipeline(line);
+        free(line);
+        if (myPipeline == NULL) {
+            fprintf(stderr, "failed to create pipeline\n");
+        }
+        /* abandon command line if there was an interrupt */
+        if (interrupted) {
+            interrupted = 0;
+            continue;
+        }
+
+        /* execute the processes */
+        mush(argc, argv, myPipeline);
+        free_pipeline(myPipeline);
+        fflush(stdout);
+    }
 
 
     /* cleanup */
+    fclose(infile);
     yylex_destroy();
     return 0;
 }
