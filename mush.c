@@ -15,7 +15,7 @@
 
 #define READ_END 0
 #define WRITE_END 1
-#define SHELL_PROMPT "8=P "
+#define SHELL_PROMPT "8-P "
 
 char interrupted = 0;
 
@@ -77,26 +77,31 @@ int tryCD(int argc, char *argv[]) {
             perror("chdir");
             return -1;
         }
+        return 0;
     }
 
-    /* if path wasn't specified, change to home directory */
-    else {
-        path = getenv("HOME");
-        if (path == NULL) {
-            p = getpwuid(getuid());
-            if (p == NULL) {
-                fprintf(stderr, "unable to determine home directory\n");
-                return -1;
-            }
-            res = chdir(p->pw_dir);
-            free(p);
-            if (res == -1) {
-                perror("chdir");
-                return -1;
-            }
+    /* if path wasn't specified, change to home directory with HOME env */
+    path = getenv("HOME");
+    if (path != NULL) {
+        if (chdir(path) == -1) {
+            perror("chdir");
+            return -1;
         }
+        return 0;
     }
 
+    /* if HOME didn't work, try looking up password entry */
+    p = getpwuid(getuid());
+    if (p == NULL) {
+        fprintf(stderr, "unable to determine home directory\n");
+        return -1;
+    }
+    res = chdir(p->pw_dir);
+    free(p);
+    if (res == -1) {
+        perror("chdir");
+        return -1;
+    }
     return 0;
 }
 
@@ -342,7 +347,7 @@ int main(int argc, char *argv[]) {
 
     /* cleanup */
     if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
-        printf("\nSuccessfully exited mush.\n");
+        printf("\nSuccessfully exited. Thank you very mush!\n");
         fflush(stdout);
     }
     fclose(infile);
