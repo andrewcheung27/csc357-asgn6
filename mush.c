@@ -121,7 +121,7 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
     sigemptyset(&sigset);
     sigaddset(&sigset, SIGINT);
     prevStage = NULL;
-    stage = (myPipeline->stage)[numChildren];
+    stage = (myPipeline->stage) + numChildren;
 
 
     /* fill in file descriptors table (fds),
@@ -143,7 +143,8 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
         if (stage->inname != NULL) {
             fds[in] = inputOpen(stage->inname);
             if (fds[in] == -1) {
-                fprintf(stderr, "could not open `%s`: %s\n", name, strerror(errno));
+                fprintf(stderr, "could not open `%s`: %s\n",
+                        stage->inname, strerror(errno));
                 free(fds);
                 return -1;
             }
@@ -180,7 +181,7 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
 
         numChildren++;
         prevStage = stage;
-        stage = (myPipeline->stage)[numChildren];
+        stage = (myPipeline->stage) + numChildren;
     }
 
 
@@ -201,7 +202,7 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
             if (fds[in] != STDIN_FILENO) {
                 dup2(fds[in], STDIN_FILENO);
             }
-            if (outFD != STDOUT_FILENO) {
+            if (fds[out] != STDOUT_FILENO) {
                 dup2(fds[out], STDOUT_FILENO);
             }
 
@@ -212,7 +213,7 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
 
             /* unblock interrupts and exec child process */
             sigprocmask(SIG_UNBLOCK, &sigset, 0);
-            execvp((stage->argv)[0], myPipleine->stage->argv);
+            execvp((stage->argv)[0], myPipeline->stage->argv);
 
             /* _exit from child if exec failed */
             perror((stage->argv)[0]);
@@ -272,7 +273,7 @@ int main(int argc, char *argv[]) {
     /* set up SIGINT handler */
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = handler;
-    sigaction(SIGINT, sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
 
     while (!feof(infile)) {
         if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
