@@ -1,6 +1,7 @@
 /* the Minimally Useful Shell (MUSH) */
 
 
+#include <errno.h>
 #include <fcntl.h>
 #include <mush.h>
 #include <pwd.h>
@@ -16,7 +17,6 @@
 #define WRITE_END 1
 #define SHELL_PROMPT "8=P "
 
-extern int errno;
 char interrupted = 0;
 
 
@@ -113,7 +113,6 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
     if (fds == NULL) {
         perror("malloc");
         return -1;
-        exit(EXIT_FAILURE);
     }
     numChildren = 0;
     newPipe[READ_END] = -1;
@@ -121,23 +120,30 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
     sigemptyset(&sigset);
     sigaddset(&sigset, SIGINT);
     prevStage = NULL;
-    stage = (myPipeline->stage) + numChildren;
+    stage = myPipeline->stage + numChildren;
 
 
     /* fill in file descriptors table (fds),
      * making pipes and opening files as needed */
     while (numChildren < myPipeline->length) {
+        in = 2 * numChildren;
+        out = 2 * numChildren + 1;
+
         /* built-in cd command */
         if (!strcmp((stage->argv)[0], "cd")) {
-            if (tryCD(stage->argc, stage->argv) == -1) {
+            i = tryCD(stage->argc, stage->argv);
+            if (i == -1) {
                 /* tryCD printed error */
                 free(fds);
                 return -1;
             }
+            fds[in] = -1;
+            fds[out] = -1;
+            numChildren++;
+            prevStage = stage;
+            stage = myPipeline->stage + numChildren;
+            continue;
         }
-
-        in = 2 * numChildren;
-        out = 2 * numChildren + 1;
 
         /* if there is an inname, open and read from that */
         if (stage->inname != NULL) {
@@ -171,7 +177,7 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
         }
         /* for NULL outname, write to stdout or pipe */
         else {
-            if (numChildren + 1 == myPipeline-> length) {
+            if (numChildren + 1 == myPipeline->length) {
                 fds[out] = STDOUT_FILENO;
             }
             else {
@@ -182,12 +188,19 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
 
         numChildren++;
         prevStage = stage;
-        stage = (myPipeline->stage) + numChildren;
+        stage = myPipeline->stage + numChildren;
     }
 
 
     /* launch children */
     for (i = 0; i < myPipeline->length; i++) {
+        stage = myPipeline->stage + i;
+
+        if (!strcmp(stage->argv[0], "cd")) {
+            numChildren--;
+            continue;
+        }
+
         in = 2 * i;
         out = 2 * i + 1;
 
@@ -209,12 +222,14 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
 
             /* clean up duplicate FDs */
             for (i = 0; i < myPipeline->length * 2; i++) {
-                close(fds[i]);
+                if (i != in && i != out) {
+                    close(fds[i]);
+                }
             }
 
             /* unblock interrupts and exec child process */
             sigprocmask(SIG_UNBLOCK, &sigset, 0);
-            execvp((stage->argv)[0], myPipeline->stage->argv);
+            execvp(stage->argv[0], myPipeline->stage->argv);
 
             /* _exit from child if exec failed */
             perror((stage->argv)[0]);
@@ -224,8 +239,10 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
 
 
     /* close write ends of the children (odd indices), so they don't hang */
-    for (i = WRITE_END; i < myPipeline->length * 2; i += 2) {
-        close(fds[i]);
+    for (i = 1; i < myPipeline->length * 2; i += 2) {
+        if (i != STDOUT_FILENO) {
+            close(fds[i]);
+        }
     }
 
 
@@ -279,12 +296,12 @@ int main(int argc, char *argv[]) {
     while (!feof(infile)) {
         if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
             printf("%s", SHELL_PROMPT);
+            fflush(stdout);
         }
 
         /* read command into pipeline */
         line = readLongString(infile);
         if (line == NULL) {
-            fprintf(stderr, "input could not be read\n");
             continue;
         }
         myPipeline = crack_pipeline(line);
@@ -297,6 +314,7 @@ int main(int argc, char *argv[]) {
             interrupted = 0;
             continue;
         }
+        print_pipeline(stderr, myPipeline);
 
         /* block interrupts while setting up to launch children */
         sigprocmask(SIG_BLOCK, &sigset, 0);
