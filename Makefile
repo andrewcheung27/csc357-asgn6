@@ -2,12 +2,12 @@ CC = gcc
 CFLAGS = -Wall -pedantic -g -O3
 
 
-all: mush.c
+all: mush
 
 
-mush2: mush.o
+mush: mush.o
 	$(CC) $(CFLAGS) -o mush -L ~pn-cs357/Given/Mush/lib64 mush.o -lmush
-mush2.o: mush.c
+mush.o: mush.c
 	$(CC) $(CFLAGS) -c -o mush.o -I ~pn-cs357/Given/Mush/include mush.c
 
 
