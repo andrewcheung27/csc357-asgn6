@@ -1,3 +1,6 @@
+/* the Minimally Useful Shell (MUSH) */
+
+
 #include <fcntl.h>
 #include <mush.h>
 #include <pwd.h>
@@ -17,10 +20,11 @@ extern int errno;
 char interrupted = 0;
 
 
+/* opens infile */
 int inputOpen(char *name) {
     int fd;
 
-    fd = open(name, O_RDONLY);
+    fd = open(name, O_RDWR);
     if (fd == -1) {
         return -1;
     }
@@ -29,6 +33,7 @@ int inputOpen(char *name) {
 }
 
 
+/* opens outfile with O_CREAT */
 int outputOpen(char *name) {
     int m, fd;
 
@@ -42,11 +47,13 @@ int outputOpen(char *name) {
 }
 
 
+/* assigned to SIGINT, sets global interrupted variable to true */
 void handler(int signum) {
     interrupted = 1;
 }
 
 
+/* built-in cd command using chdir */
 int tryCD(int argc, char *argv[]) {
     char *path;
     struct passwd *p;
@@ -64,10 +71,10 @@ int tryCD(int argc, char *argv[]) {
         }
     }
 
+    /* if path wasn't specified, change to home directory */
     else {
         path = getenv("HOME");
         if (path == NULL) {
-            /* use getpwuid to look up home directory */
             p = getpwuid(getuid());
             if (p == NULL) {
                 fprintf(stderr, "unable to determine home directory\n");
@@ -86,11 +93,8 @@ int tryCD(int argc, char *argv[]) {
 }
 
 
-int mush(int argc, char *argv[], pipeline myPipeline) {
-    sigset_t sigset;
-    sigset_t oldSigset;
-    struct sigaction sa;
-
+/* launches the child processes in a pipeline */
+int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
     int i;
     int *fds;
     int in;
@@ -99,18 +103,10 @@ int mush(int argc, char *argv[], pipeline myPipeline) {
     int numChildren;
     pid_t child;
     int status;
+    sigset_t sigset;
 
     struct clstage *prevStage;
     struct clstage *stage;
-
-
-    /* block interrupts until right before launching children */
-    sigemptyset(sigset);
-    sigaddset(sigset, SIGINT);
-    sigprocmask(SIG_SETMASK, &sigset, &oldSigset);
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = handler;
-    sigaction(SIGINT, sa, NULL);
 
 
     fds = (int *) malloc(sizeof(int) * myPipeline->length * 2);
@@ -122,22 +118,24 @@ int mush(int argc, char *argv[], pipeline myPipeline) {
     numChildren = 0;
     newPipe[READ_END] = -1;
     newPipe[WRITE_END] = -1;
+    sigemptyset(&sigset);
+    sigaddset(&sigset, SIGINT);
     prevStage = NULL;
     stage = (myPipeline->stage)[numChildren];
-
-
-    /* built-in cd command */
-    if (!strcmp((stage->argv)[0], "cd")) {
-        if (tryCD(stage->argc, stage->argv) == -1) {
-            free(fds);
-            return -1;
-        }
-    }
 
 
     /* fill in file descriptors table (fds),
      * making pipes and opening files as needed */
     while (numChildren < myPipeline->length) {
+        /* built-in cd command */
+        if (!strcmp((stage->argv)[0], "cd")) {
+            if (tryCD(stage->argc, stage->argv) == -1) {
+                /* tryCD printed error */
+                free(fds);
+                return -1;
+            }
+        }
+
         in = 2 * numChildren;
         out = 2 * numChildren + 1;
 
@@ -150,7 +148,7 @@ int mush(int argc, char *argv[], pipeline myPipeline) {
                 return -1;
             }
         }
-            /* for NULL inname, read from stdin or pipe */
+        /* for NULL inname, read from stdin or pipe */
         else {
             if (prevStage == NULL) {
                 fds[in] = STDIN_FILENO;
@@ -169,7 +167,7 @@ int mush(int argc, char *argv[], pipeline myPipeline) {
                 return -1;
             }
         }
-            /* for NULL outname, write to stdout or pipe */
+        /* for NULL outname, write to stdout or pipe */
         else {
             if (numChildren + 1 == myPipeline-> length) {
                 fds[out] = STDOUT_FILENO;
@@ -186,7 +184,7 @@ int mush(int argc, char *argv[], pipeline myPipeline) {
     }
 
 
-    /* glorious birth! */
+    /* launch children */
     for (i = 0; i < myPipeline->length; i++) {
         in = 2 * i;
         out = 2 * i + 1;
@@ -213,7 +211,7 @@ int mush(int argc, char *argv[], pipeline myPipeline) {
             }
 
             /* unblock interrupts and exec child process */
-            sigprocmask(SIG_SETMASK, &oldSigset, 0);
+            sigprocmask(SIG_UNBLOCK, &sigset, 0);
             execvp((stage->argv)[0], myPipleine->stage->argv);
 
             /* _exit from child if exec failed */
@@ -238,7 +236,9 @@ int mush(int argc, char *argv[], pipeline myPipeline) {
         }
     }
 
+
     free(fds);
+    return 0;
 }
 
 
@@ -246,7 +246,8 @@ int main(int argc, char *argv[]) {
     FILE *infile;
     char *line;
     pipeline myPipeline;
-    char printPrompt;
+    sigset_t sigset;
+    struct sigaction sa;
 
 
     /* arg things */
@@ -266,20 +267,22 @@ int main(int argc, char *argv[]) {
     }
 
 
-    printPrompt = 1;
+    sigemptyset(&sigset);
+    sigaddset(&sigset, SIGINT);
+    /* set up SIGINT handler */
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handler;
+    sigaction(SIGINT, sa, NULL);
+
     while (!feof(infile)) {
-        if (printPrompt) {
-            printf("%s", SHELL_PROMPT);
-        }
+        printf("%s", SHELL_PROMPT);
 
         /* read command into pipeline */
         line = readLongString(infile);
         if (line == NULL) {
             fprintf(stderr, "input could not be read\n");
-            printPrompt = 0;
             continue;
         }
-        printPrompt = 1;
         myPipeline = crack_pipeline(line);
         free(line);
         if (myPipeline == NULL) {
@@ -291,10 +294,15 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
+        /* block interrupts while setting up to launch children */
+        sigprocmask(SIG_BLOCK, &sigset, 0);
+
         /* execute the processes */
-        mush(argc, argv, myPipeline);
+        gloriousBirth(argc, argv, myPipeline);
+
         free_pipeline(myPipeline);
         fflush(stdout);
+        sigprocmask(SIG_UNBLOCK, &sigset, 0);
     }
 
 
