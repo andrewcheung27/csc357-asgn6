@@ -20,6 +20,14 @@
 char interrupted = 0;
 
 
+void newline(void) {
+    if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
+        printf("\n");
+        fflush(stdout);
+    }
+}
+
+
 /* opens infile */
 int inputOpen(char *name) {
     int fd;
@@ -302,6 +310,8 @@ int main(int argc, char *argv[]) {
         /* read command into pipeline */
         line = readLongString(infile);
         if (line == NULL) {
+            newline();
+            interrupted = 0;
             continue;
         }
         myPipeline = crack_pipeline(line);
@@ -311,10 +321,12 @@ int main(int argc, char *argv[]) {
         }
         /* abandon command line if there was an interrupt */
         if (interrupted) {
+            free_pipeline(myPipeline);
+            newline();
             interrupted = 0;
             continue;
         }
-        print_pipeline(stderr, myPipeline);
+        /* print_pipeline(stderr, myPipeline); */
 
         /* block interrupts while setting up to launch children */
         sigprocmask(SIG_BLOCK, &sigset, 0);
@@ -329,6 +341,10 @@ int main(int argc, char *argv[]) {
 
 
     /* cleanup */
+    if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
+        printf("\nSuccessfully exited mush.\n");
+        fflush(stdout);
+    }
     fclose(infile);
     yylex_destroy();
     return 0;
