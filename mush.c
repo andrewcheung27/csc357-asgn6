@@ -163,7 +163,8 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
         if (stage->outname != NULL) {
             fds[out] = outputOpen(stage->outname);
             if (fds[out] == -1) {
-                fprintf(stderr, "could not open `%s`: %s\n", name, strerror(errno));
+                fprintf(stderr, "could not open `%s`: %s\n",
+                        stage->outname, strerror(errno));
                 free(fds);
                 return -1;
             }
