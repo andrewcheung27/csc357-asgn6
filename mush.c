@@ -133,7 +133,7 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
     sigemptyset(&sigset);
     sigaddset(&sigset, SIGINT);
     prevStage = NULL;
-    stage = myPipeline->stage + numChildren;
+    stage = myPipeline->stage;
 
 
     /* fill in file descriptors table (fds),
@@ -235,9 +235,7 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
 
             /* clean up duplicate FDs */
             for (i = 0; i < myPipeline->length * 2; i++) {
-                if (i != in && i != out) {
-                    close(fds[i]);
-                }
+                close(fds[i]);
             }
 
             /* unblock interrupts and exec child process */
@@ -331,7 +329,7 @@ int main(int argc, char *argv[]) {
             interrupted = 0;
             continue;
         }
-        /* print_pipeline(stderr, myPipeline); */
+        print_pipeline(stderr, myPipeline);
 
         /* block interrupts while setting up to launch children */
         sigprocmask(SIG_BLOCK, &sigset, 0);
@@ -347,7 +345,7 @@ int main(int argc, char *argv[]) {
 
     /* cleanup */
     if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
-        printf("\nSuccessfully exited. Thank you very mush!\n");
+        printf("Successfully exited. Thank you very mush!\n");
         fflush(stdout);
     }
     fclose(infile);
