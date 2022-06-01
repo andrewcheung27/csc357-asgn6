@@ -18,8 +18,8 @@ server:
 	ssh acheun29@unix1.csc.calpoly.edu
 
 upload:
-	scp -r ../csc357-asgn6 acheun29@unix1.csc.calpoly.edu:csc357
+	scp README Makefile mush.c acheun29@unix1.csc.calpoly.edu:csc357/csc357-asgn6
 
 download:
-	scp -r acheun29@unix1.csc.calpoly.edu:csc357/csc357-asgn6 /Users/andrewcheung/Documents/Cal\ Poly\ Stuff/csc357
+	scp acheun29@unix1.csc.calpoly.edu:csc357/csc357-asgn6/"README Makefile mush.c" .
 
