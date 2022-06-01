@@ -237,7 +237,7 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
 
             /* unblock interrupts and exec child process */
             sigprocmask(SIG_UNBLOCK, &sigset, 0);
-            execvp(stage->argv[0], myPipeline->stage->argv);
+            execvp(stage->argv[0], stage->argv);
 
             /* _exit from child if exec failed */
             perror((stage->argv)[0]);
