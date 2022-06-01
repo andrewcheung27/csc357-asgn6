@@ -15,6 +15,7 @@
 
 #define READ_END 0
 #define WRITE_END 1
+#define NO_DUP -1
 #define SHELL_PROMPT "8-P "
 
 char interrupted = 0;
@@ -117,10 +118,8 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
     pid_t child;
     int status;
     sigset_t sigset;
-
     struct clstage *prevStage;
     struct clstage *stage;
-
 
     fds = (int *) malloc(sizeof(int) * myPipeline->length * 2);
     if (fds == NULL) {
@@ -134,7 +133,6 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
     sigaddset(&sigset, SIGINT);
     prevStage = NULL;
     stage = myPipeline->stage;
-
 
     /* fill in file descriptors table (fds),
      * making pipes and opening files as needed */
@@ -171,7 +169,7 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
         /* for NULL inname, read from stdin or pipe */
         else {
             if (prevStage == NULL) {
-                fds[in] = STDIN_FILENO;
+                fds[in] = NO_DUP;
             }
             else {
                 fds[in] = newPipe[READ_END];
@@ -191,7 +189,7 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
         /* for NULL outname, write to stdout or pipe */
         else {
             if (numChildren + 1 == myPipeline->length) {
-                fds[out] = STDOUT_FILENO;
+                fds[out] = NO_DUP;
             }
             else {
                 pipe(newPipe);
@@ -203,7 +201,6 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
         prevStage = stage;
         stage = myPipeline->stage + numChildren;
     }
-
 
     /* launch children */
     for (i = 0; i < myPipeline->length; i++) {
@@ -226,10 +223,10 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
         /* child */
         if (child == 0) {
             /* I/O redirection */
-            if (fds[in] != STDIN_FILENO) {
+            if (fds[in] != NO_DUP) {
                 dup2(fds[in], STDIN_FILENO);
             }
-            if (fds[out] != STDOUT_FILENO) {
+            if (fds[out] != NO_DUP) {
                 dup2(fds[out], STDOUT_FILENO);
             }
 
@@ -248,24 +245,18 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
         }
     }
 
-
     /* close write ends of the children (odd indices), so they don't hang */
     for (i = 1; i < myPipeline->length * 2; i += 2) {
-        if (i != STDOUT_FILENO) {
-            close(fds[i]);
-        }
+        close(fds[i]);
     }
-
 
     /* wait for all the children */
     i = 0;
     while (i < numChildren) {
-        wait(&status);
-        if (WIFEXITED(status)) {
+        if (wait(&status) != -1) {
             i++;
         }
     }
-
 
     free(fds);
     return 0;
@@ -278,7 +269,6 @@ int main(int argc, char *argv[]) {
     pipeline myPipeline;
     sigset_t sigset;
     struct sigaction sa;
-
 
     /* arg things */
     if (argc == 1) {
@@ -295,7 +285,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "usage: mush2 [infile]\n");
         exit(EXIT_FAILURE);
     }
-
 
     sigemptyset(&sigset);
     sigaddset(&sigset, SIGINT);
@@ -329,9 +318,9 @@ int main(int argc, char *argv[]) {
             interrupted = 0;
             continue;
         }
-        print_pipeline(stderr, myPipeline);
+        /* print_pipeline(stderr, myPipeline); */
 
-        /* block interrupts while setting up to launch children */
+        /* block interrupts while launching children */
         sigprocmask(SIG_BLOCK, &sigset, 0);
 
         /* execute the processes */
