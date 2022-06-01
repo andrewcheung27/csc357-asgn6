@@ -275,7 +275,9 @@ int main(int argc, char *argv[]) {
     sigaction(SIGINT, sa, NULL);
 
     while (!feof(infile)) {
-        printf("%s", SHELL_PROMPT);
+        if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
+            printf("%s", SHELL_PROMPT);
+        }
 
         /* read command into pipeline */
         line = readLongString(infile);
