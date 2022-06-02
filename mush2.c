@@ -341,7 +341,7 @@ int main(int argc, char *argv[]) {
 
     /* cleanup */
     if (printPrompt) {
-        printf("Successfully exited.");
+        printf("Successfully exited. ");
         printf("You're welcome, and thank you very mush2!\n");
         fflush(stdout);
     }
