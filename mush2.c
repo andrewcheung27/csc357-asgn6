@@ -21,14 +21,6 @@
 char interrupted = 0;
 
 
-void newline(void) {
-    if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
-        printf("\n");
-        fflush(stdout);
-    }
-}
-
-
 /* opens infile */
 int inputOpen(char *name) {
     int fd;
@@ -75,7 +67,7 @@ int tryCD(int argc, char *argv[]) {
 
     if (argc == 2) {
         if (chdir(argv[1]) == -1) {
-            perror("chdir");
+            perror(argv[1]);
             return -1;
         }
         return 0;
@@ -83,11 +75,7 @@ int tryCD(int argc, char *argv[]) {
 
     /* if path wasn't specified, change to home directory with HOME env */
     path = getenv("HOME");
-    if (path != NULL) {
-        if (chdir(path) == -1) {
-            perror("chdir");
-            return -1;
-        }
+    if (path != NULL && chdir(path) != -1) {
         return 0;
     }
 
@@ -98,12 +86,11 @@ int tryCD(int argc, char *argv[]) {
         return -1;
     }
     res = chdir(p->pw_dir);
-    free(p);
     if (res == -1) {
-        perror("chdir");
-        return -1;
+        perror(p->pw_dir);
     }
-    return 0;
+    free(p);
+    return res;
 }
 
 
@@ -252,6 +239,7 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
 
     /* wait for all the children */
     i = 0;
+    sigprocmask(SIG_UNBLOCK, &sigset, 0);
     while (i < numChildren) {
         if (wait(&status) != -1) {
             i++;
@@ -269,10 +257,12 @@ int main(int argc, char *argv[]) {
     pipeline myPipeline;
     sigset_t sigset;
     struct sigaction sa;
+    char printPrompt = 0;
 
     /* arg things */
     if (argc == 1) {
         infile = stdin;
+        printPrompt = 69;
     }
     else if (argc == 2) {
         infile = fopen(argv[1], "r");
@@ -286,6 +276,10 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    if (printPrompt && isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
+        printPrompt = 69;
+    }
+
     sigemptyset(&sigset);
     sigaddset(&sigset, SIGINT);
     /* set up SIGINT handler */
@@ -294,7 +288,7 @@ int main(int argc, char *argv[]) {
     sigaction(SIGINT, &sa, NULL);
 
     while (!feof(infile)) {
-        if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
+        if (printPrompt) {
             printf("%s", SHELL_PROMPT);
             fflush(stdout);
         }
@@ -302,19 +296,26 @@ int main(int argc, char *argv[]) {
         /* read command into pipeline */
         line = readLongString(infile);
         if (line == NULL) {
-            newline();
+            if (printPrompt) {
+                printf("\n");
+                fflush(stdout);
+            }
             interrupted = 0;
             continue;
         }
         myPipeline = crack_pipeline(line);
         free(line);
         if (myPipeline == NULL) {
-            fprintf(stderr, "failed to create pipeline\n");
+            interrupted = 0;
+            continue;
         }
         /* abandon command line if there was an interrupt */
         if (interrupted) {
             free_pipeline(myPipeline);
-            newline();
+            if (printPrompt) {
+                printf("\n");
+                fflush(stdout);
+            }
             interrupted = 0;
             continue;
         }
@@ -325,16 +326,23 @@ int main(int argc, char *argv[]) {
 
         /* execute the processes */
         gloriousBirth(argc, argv, myPipeline);
+        if (interrupted) {
+            if (printPrompt) {
+                printf("\n");
+                fflush(stdout);
+            }
+            interrupted = 0;
+        }
 
         free_pipeline(myPipeline);
         fflush(stdout);
-        sigprocmask(SIG_UNBLOCK, &sigset, 0);
     }
 
 
     /* cleanup */
-    if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
-        printf("Successfully exited. Thank you very mush!\n");
+    if (printPrompt) {
+        printf("Successfully exited.");
+        printf("You're welcome, and thank you very mush2!\n");
         fflush(stdout);
     }
     fclose(infile);
