@@ -97,6 +97,7 @@ int tryCD(int argc, char *argv[]) {
 /* launches the child processes in a pipeline */
 int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
     int i;
+    int res;
     int *fds;
     int in;
     int out;
@@ -241,7 +242,11 @@ int gloriousBirth(int argc, char *argv[], pipeline myPipeline) {
     i = 0;
     sigprocmask(SIG_UNBLOCK, &sigset, 0);
     while (i < numChildren) {
-        if (wait(&status) != -1) {
+        res = wait(&status);
+        if (res == -1) {
+            /* if (errno == EINTR) {
+                i++;
+            } */
             i++;
         }
     }
