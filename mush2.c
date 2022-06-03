@@ -309,6 +309,7 @@ int main(int argc, char *argv[]) {
             interrupted = 0;
             continue;
         }
+        yylex_destroy();
         /* abandon command line if there was an interrupt */
         if (interrupted) {
             free_pipeline(myPipeline);
@@ -346,7 +347,6 @@ int main(int argc, char *argv[]) {
         fflush(stdout);
     }
     fclose(infile);
-    yylex_destroy();
     return 0;
 }
 
